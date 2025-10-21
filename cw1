@@ -207,7 +207,6 @@ class MazeApp:
         self.root.after(delay, self.animate)
 
     def reset_map(self):
-        """Clear colors and reset start/goal points."""
         self.start = None
         self.goal = None
         self.running = False
