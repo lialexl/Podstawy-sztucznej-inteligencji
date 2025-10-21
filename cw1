@@ -1,0 +1,255 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from collections import deque
+
+DIR_DELTAS = {'U': (-1, 0), 'D': (1, 0), 'L': (0, -1), 'R': (0, 1)}
+OPPOSITE = {'U': 'D', 'D': 'U', 'L': 'R', 'R': 'L'}
+
+TILE_ACTIONS = {
+    '\u253C': set(['U','D','L','R']), '\u2502': set(['U','D']), '\u2500': set(['L','R']),
+    '\u0020': set(), '\u2510': set(['D','L']), '\u2518': set(['U','L']), '\u2514': set(['U','R']),
+    '\u250C': set(['D','R']), '\u2524': set(['U','D','L']), '\u2534': set(['U','R','L']),
+    '\u251C': set(['U','D','R']), '\u252C': set(['D','R','L']),
+    '\u2575': set(['U']), '\u2577': set(['D']), '\u2574': set(['L']), '\u2576': set(['R']),
+}
+
+COLORS = {
+    "default": "white",
+    "wall": "lightgrey",
+    "start": "#ff6b6b",
+    "goal": "#4d7cff",
+    "visited": "#37d67a",
+    "frontier": "#ffd66b",
+    "path": "#c77cff",
+}
+
+def load_map(path):
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [line.rstrip("\n") for line in f]
+    rows = len(lines)
+    cols = max((len(line) for line in lines), default=0)
+    grid = [list(line.ljust(cols)) for line in lines]
+    return grid
+
+def in_bounds(r, c, rows, cols): 
+    return 0 <= r < rows and 0 <= c < cols
+
+def tile_allows(ch, direction): 
+    return direction in TILE_ACTIONS.get(ch, set())
+
+def neighbors(grid, r, c):
+    rows, cols = len(grid), len(grid[0])
+    char = grid[r][c]
+    for d, (dr, dc) in DIR_DELTAS.items():
+        nr, nc = r+dr, c+dc
+        if in_bounds(nr, nc, rows, cols) and tile_allows(char, d):
+            if tile_allows(grid[nr][nc], OPPOSITE[d]):
+                yield (nr, nc)
+
+def bfs_gen(grid, start, goal):
+    q = deque([start])
+    parent = {start: None}
+    visited, frontier = set(), {start}
+    yield visited, frontier, None
+    while q:
+        current = q.popleft()
+        frontier.discard(current)
+        visited.add(current)
+        yield visited, frontier, current
+        if current == goal:
+            path, cur = [], current
+            while cur:
+                path.append(cur)
+                cur = parent[cur]
+            yield visited, frontier, ('FOUND', list(reversed(path)))
+            return
+        for n in neighbors(grid, *current):
+            if n not in visited and n not in frontier:
+                parent[n] = current
+                q.append(n)
+                frontier.add(n)
+    yield visited, frontier, ('NOTFOUND', None)
+
+def dfs_gen(grid, start, goal):
+    stack = [start]
+    parent = {start: None}
+    visited, frontier = set(), {start}
+    yield visited, frontier, None
+    while stack:
+        current = stack.pop()
+        frontier.discard(current)
+        visited.add(current)
+        yield visited, frontier, current
+        if current == goal:
+            path, cur = [], current
+            while cur:
+                path.append(cur)
+                cur = parent[cur]
+            yield visited, frontier, ('FOUND', list(reversed(path)))
+            return
+        for n in reversed(list(neighbors(grid, *current))):
+            if n not in visited and n not in frontier:
+                parent[n] = current
+                stack.append(n)
+                frontier.add(n)
+    yield visited, frontier, ('NOTFOUND', None)
+
+class MazeApp:
+    def __init__(self, root, grid):
+        self.root, self.grid = root, grid
+        self.rows, self.cols = len(grid), len(grid[0])
+        self.cell_size = 25
+        self.start = None
+        self.goal = None
+        self.search_gen = None
+        self.running = False
+        self.rects = {}
+        self.texts = {}
+
+        root.title("Maze Path Finder (Unicode View)")
+        self.canvas = tk.Canvas(root, width=self.cols*self.cell_size,
+                                height=self.rows*self.cell_size, bg="white")
+        self.canvas.pack()
+        self.canvas.bind("<Button-1>", self.click)
+
+        ctrl = tk.Frame(root)
+        ctrl.pack(pady=5)
+        self.alg = tk.StringVar(value="BFS")
+        tk.OptionMenu(ctrl, self.alg, "BFS", "DFS").pack(side=tk.LEFT)
+        tk.Label(ctrl, text="Delay (ms):").pack(side=tk.LEFT)
+        self.delay = tk.IntVar(value=50)
+        tk.Entry(ctrl, textvariable=self.delay, width=5).pack(side=tk.LEFT)
+        tk.Button(ctrl, text="Start", command=self.start_search).pack(side=tk.LEFT, padx=3)
+        tk.Button(ctrl, text="Reset Map", command=self.reset_map).pack(side=tk.LEFT, padx=3)
+        tk.Button(ctrl, text="Load Map", command=self.load_new_map).pack(side=tk.LEFT, padx=3)
+
+        self.status = tk.Label(root, text="Click to set START", anchor="w")
+        self.status.pack(fill=tk.X)
+        self.draw_map()
+
+    def draw_map(self):
+        self.canvas.delete("all")
+        self.rects = {}
+        self.texts = {}
+        for r in range(self.rows):
+            for c in range(self.cols):
+                ch = self.grid[r][c]
+                color = COLORS["default"] if ch in TILE_ACTIONS and TILE_ACTIONS[ch] else COLORS["wall"]
+                x1, y1 = c*self.cell_size, r*self.cell_size
+                x2, y2 = x1+self.cell_size, y1+self.cell_size
+                rect = self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="gray")
+                text = self.canvas.create_text(
+                    (x1+x2)/2, (y1+y2)/2,
+                    text=ch,
+                    font=("Consolas", int(self.cell_size*0.5)),
+                    fill="black"
+                )
+                self.rects[(r, c)] = rect
+                self.texts[(r, c)] = text
+
+    def draw_cell(self, r, c, color):
+        if (r, c) in self.rects:
+            self.canvas.itemconfig(self.rects[(r, c)], fill=color)
+
+    def click(self, event):
+        c, r = event.x // self.cell_size, event.y // self.cell_size
+        if not in_bounds(r, c, self.rows, self.cols):
+            return
+        if not self.start:
+            self.start = (r, c)
+            self.draw_cell(r, c, COLORS["start"])
+            self.status.config(text="Click to set GOAL")
+        elif not self.goal and (r, c) != self.start:
+            self.goal = (r, c)
+            self.draw_cell(r, c, COLORS["goal"])
+            self.status.config(text="Ready to search")
+        else:
+            self.status.config(text="Start and goal already set.")
+
+    def start_search(self):
+        if not self.start or not self.goal:
+            messagebox.showerror("Error", "Select start and goal first.")
+            return
+        alg = self.alg.get()
+        self.search_gen = bfs_gen(self.grid, self.start, self.goal) if alg == "BFS" else dfs_gen(self.grid, self.start, self.goal)
+        self.status.config(text=f"Running {alg}...")
+        self.running = True
+        self.animate()
+
+    def animate(self):
+        if not self.running: 
+            return
+        try:
+            visited, frontier, current = next(self.search_gen)
+        except StopIteration:
+            self.running = False
+            return
+
+        for r, c in visited: 
+            self.draw_cell(r, c, COLORS["visited"])
+        for r, c in frontier: 
+            self.draw_cell(r, c, COLORS["frontier"])
+        self.draw_cell(*self.start, COLORS["start"])
+        self.draw_cell(*self.goal, COLORS["goal"])
+
+        if isinstance(current, tuple) and current[0] in ('FOUND', 'NOTFOUND'):
+            if current[0] == 'FOUND':
+                _, path = current
+                for r, c in path: 
+                    self.draw_cell(r, c, COLORS["path"])
+                self.status.config(text=f"Path found ({len(path)} steps)")
+            else:
+                self.status.config(text="No path found")
+            self.running = False
+            return
+
+        delay = max(10, int(self.delay.get()))
+        self.root.after(delay, self.animate)
+
+    def reset_map(self):
+        """Clear colors and reset start/goal points."""
+        self.start = None
+        self.goal = None
+        self.running = False
+        self.search_gen = None
+        self.draw_map()
+        self.status.config(text="Click to set START")
+
+    def load_new_map(self):
+        path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt"), ("All", "*.*")])
+        if not path: 
+            return
+        try:
+            self.grid = load_map(path)
+            self.rows, self.cols = len(self.grid), len(self.grid[0])
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+        self.start = self.goal = None
+        self.canvas.config(width=self.cols*self.cell_size, height=self.rows*self.cell_size)
+        self.draw_map()
+        self.status.config(text="Click to set START")
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mapfile", nargs="?")
+    args = parser.parse_args()
+
+    if not args.mapfile:
+        root = tk.Tk()
+        root.withdraw()
+        path = filedialog.askopenfilename(title="Select map file")
+        if not path: 
+            return
+        root.destroy()
+        grid = load_map(path)
+    else:
+        grid = load_map(args.mapfile)
+
+    root = tk.Tk()
+    MazeApp(root, grid)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
