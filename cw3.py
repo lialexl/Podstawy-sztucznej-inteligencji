@@ -23,10 +23,11 @@ def mutate(board, rate):
         board[i] = random.randint(0, n - 1)
     return board
 
-def genetic_n_queens(n=8, pop_size=1000, mutation_rate=0.2, max_iter=10000):
+def genetic_n_queens(n=8, pop_size=500, mutation_rate=0.2, max_iter=10000):
     population = [[random.randint(0, n - 1) for i in range(n)] for i in range(pop_size)]
     for iteration in range(max_iter):
         population.sort(key=fitness)
+        print(fitness(population[0]))
         if fitness(population[0]) == 0:
             return population[0]
         new_population = population[:pop_size // 2]
