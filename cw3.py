@@ -11,9 +11,9 @@ def fitness(board):
 
 def crossover(p1, p2):
     n = len(p1)
-    point = random.randint(1, n - 2)
-    c1 = p1[:point] + p2[point:]
-    c2 = p2[:point] + p1[point:]
+    a, b = sorted(random.sample(range(n), 2))
+    c1 = p1[:a] + p2[a:b] + p1[b:]
+    c2 = p2[:a] + p1[a:b] + p2[b:]
     return c1, c2
 
 def mutate(board, rate):
@@ -23,15 +23,15 @@ def mutate(board, rate):
         board[i] = random.randint(0, n - 1)
     return board
 
-def genetic_n_queens(n=8, pop_size=100, mutation_rate=0.1, max_iter=10000):
-    population = [[random.randint(0, n - 1) for _ in range(n)] for _ in range(pop_size)]
+def genetic_n_queens(n=8, pop_size=1000, mutation_rate=0.2, max_iter=10000):
+    population = [[random.randint(0, n - 1) for i in range(n)] for i in range(pop_size)]
     for iteration in range(max_iter):
         population.sort(key=fitness)
         if fitness(population[0]) == 0:
             return population[0]
         new_population = population[:pop_size // 2]
         while len(new_population) < pop_size:
-            p1, p2 = random.sample(population[:50], 2)
+            p1, p2 = random.choices(population, weights=[1/(1+fitness(b)) for b in population], k=2)
             c1, c2 = crossover(p1, p2)
             new_population.append(mutate(c1, mutation_rate))
             if len(new_population) < pop_size:
