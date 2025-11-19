@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk
-import copy
 import math
 
 class TicTacToe:
@@ -71,7 +70,7 @@ class TicTacToe:
             return
         self.board[r][c] = self.human
         self.buttons[r][c]['text'] = self.human
-        self.buttons[r][c]['state'] = 'disabled'
+        self.buttons[r][c]['command']=0
         winner = self.check_winner(self.board)
         if winner or self.is_full(self.board):
             self.end_game(winner)
@@ -88,7 +87,7 @@ class TicTacToe:
             r, c = move
             self.board[r][c] = self.computer
             self.buttons[r][c]['text'] = self.computer
-            self.buttons[r][c]['state'] = 'disabled'
+            self.buttons[r][c]['command']=0
         winner = self.check_winner(self.board)
         if winner or self.is_full(self.board):
             self.end_game(winner)
