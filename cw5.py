@@ -2,118 +2,115 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+
+
 def gauss(x, c, sigma):
-    return np.exp(-0.5 * ((x - c) / sigma) ** 2)
+    return np.exp(-((x - c) ** 2) / (2 * sigma ** 2))
 
-humid_terms = {
-    'low':    {'c': 20, 's': 12},
-    'medium': {'c': 50, 's': 10},
-    'high':   {'c': 80, 's': 12},
-}
 
-temp_terms = {
-    'cold': {'c': 10, 's': 6},
-    'ok':   {'c': 22, 's': 6},
-    'hot':  {'c': 34, 's': 6},
-}
 
-tariff_terms = {
-    'cheap':    {'c': 0.2, 's': 0.12},
-    'normal':   {'c': 0.6, 's': 0.12},
-    'expensive':{'c': 1.2, 's': 0.18},
-}
+def humidity_sets(x):
+    return {
+        "low": gauss(x, 20, 10),
+        "medium": gauss(x, 50, 10),
+        "high": gauss(x, 80, 10)
+    }
 
-out_terms = {
-    'off':    {'c': 0,  's': 6},
-    'low':    {'c': 25, 's': 8},
-    'medium': {'c': 50, 's': 10},
-    'high':   {'c': 85, 's': 8},
-}
+def temp_sets(x):
+    return {
+        "cold": gauss(x, 15, 3),
+        "normal": gauss(x, 22, 3),
+        "hot": gauss(x, 28, 3)
+    }
 
-weight_hum = 1.0
-weight_tariff = 0.6
-weight_temp = 0.3
+def price_sets(x):
+    return {
+        "cheap": gauss(x, 0.2, 0.15),
+        "mid": gauss(x, 0.5, 0.15),
+        "expensive": gauss(x, 0.8, 0.15)
+    }
 
-rules = []
-base_from_hum = {'low':'high', 'medium':'medium', 'high':'low'}
-out_levels = ['off','low','medium','high']
 
-def shift_level(level, shift):
-    idx = out_levels.index(level)
-    idx = max(0, min(len(out_levels)-1, idx + shift))
-    return out_levels[idx]
 
-for h in humid_terms.keys():
-    for t in temp_terms.keys():
-        for ta in tariff_terms.keys():
-            base = base_from_hum[h]
-            if ta == 'cheap':
-                base = shift_level(base, +1)
-            elif ta == 'expensive':
-                base = shift_level(base, -1)
-            rules.append(((h,t,ta), base))
+def humidifier_sets(x):
+    return {
+        "low": gauss(x, 10, 10),
+        "medium": gauss(x, 40, 10),
+        "high": gauss(x, 80, 10)
+    }
 
-def fuzzify_humidity(h):
-    return {name: gauss(h, p['c'], p['s']) * weight_hum for name,p in humid_terms.items()}
 
-def fuzzify_temp(T):
-    return {name: gauss(T, p['c'], p['s']) * weight_temp for name,p in temp_terms.items()}
 
-def fuzzify_tariff(price):
-    return {name: gauss(price, p['c'], p['s']) * weight_tariff for name,p in tariff_terms.items()}
+def infer(hum, temp, price):
+    rules = []
+    
+    rules.append(("high", hum["low"]))
+    
+    rules.append(("medium", hum["medium"]))
 
-def output_mfs(x):
-    return {name: gauss(x, p['c'], p['s']) for name,p in out_terms.items()}
+    rules.append(("low", hum["high"]))
 
-x_out = np.linspace(0,100,801)
-out_mf_cache = output_mfs(x_out)
+    t_weight = 0.3
+    rules.append(("high", t_weight * temp["hot"]))
+    rules.append(("low",  t_weight * temp["cold"]))
 
-def infer(h_val, t_val, tar_val):
-    fh = fuzzify_humidity(h_val)
-    ft = fuzzify_temp(t_val)
-    ftar = fuzzify_tariff(tar_val)
-    agg = np.zeros_like(x_out)
-    for (h_term,t_term,tar_term), out_term in rules:
-        activation = min(fh[h_term], ft[t_term], ftar[tar_term])
-        if activation <= 0:
-            continue
-        mf_out = out_mf_cache[out_term]
-        clipped = np.minimum(activation, mf_out)
-        agg = np.maximum(agg, clipped)
-    denom = np.sum(agg)
-    if denom == 0:
-        crisp = 0.0
-    else:
-        crisp = np.sum(agg * x_out) / denom
-    return crisp, agg
+    p_weight = 0.6
+    rules.append(("high", p_weight * price["cheap"]))
+    rules.append(("low",  p_weight * price["expensive"]))
 
-tariff_values = [0.18, 0.6, 1.2]
-tariff_labels = ['tania (0.18)', 'normalna (0.6)', 'droga (1.2)']
+    aggregated = {"low": 0, "medium": 0, "high": 0}
 
-H_vals = np.linspace(0,100,81)
-T_vals = np.linspace(0,40,41)
-H_grid, T_grid = np.meshgrid(H_vals, T_vals)
+    for label, strength in rules:
+        aggregated[label] = max(aggregated[label], strength)
 
-results = {}
-for tar, label in zip(tariff_values, tariff_labels):
-    Z = np.zeros_like(H_grid)
-    for i in range(H_grid.shape[0]):
-        for j in range(H_grid.shape[1]):
-            h = H_grid[i,j]
-            t = T_grid[i,j]
-            z,_ = infer(h,t,tar)
-            Z[i,j] = z
-    results[label] = Z
+    return aggregated
 
-for label, Z in results.items():
-    fig = plt.figure(figsize=(9,6))
-    ax = fig.add_subplot(111, projection='3d')
-    X = H_grid
-    Y = T_grid
-    ax.plot_surface(X, Y, Z, linewidth=0, antialiased=True)
-    ax.set_xlabel('Wilgotność [%]')
-    ax.set_ylabel('Temperatura [°C]')
-    ax.set_zlabel('Moc nawilżacza [%]')
-    ax.set_title(f'Charakterystyka — taryfa: {label}')
-    ax.view_init(elev=25, azim=-120)
-    plt.show()
+
+def defuzzify(agg):
+    xs = np.linspace(0, 100, 500)
+    output_mf = np.zeros_like(xs)
+
+    sets_out = humidifier_sets(xs)
+
+    for label in agg:
+        output_mf = np.maximum(output_mf, np.minimum(agg[label], sets_out[label]))
+
+    return np.sum(xs * output_mf) / np.sum(output_mf)
+
+
+def humidifier_control(humidity, temp, price):
+    hum = humidity_sets(humidity)
+    t = temp_sets(temp)
+    p = price_sets(price)
+
+    agg = infer(hum, t, p)
+    return defuzzify(agg)
+
+
+humidity_vals = np.linspace(0, 100, 60)
+temp_vals = np.linspace(10, 30, 60)
+
+prices = [0.2, 0.5, 0.8]  
+
+fig = plt.figure(figsize=(16, 5))
+
+for i, price in enumerate(prices, 1):
+    H, T = np.meshgrid(humidity_vals, temp_vals)
+
+    Z = np.zeros_like(H)
+
+    for ix in range(H.shape[0]):
+        for jx in range(H.shape[1]):
+            Z[ix, jx] = humidifier_control(H[ix, jx], T[ix, jx], price)
+
+    ax = fig.add_subplot(1, 3, i, projection='3d')
+    ax.plot_surface(H, T, Z, cmap="viridis")
+    ax.set_title(f"Cena prądu = {price}")
+    ax.set_xlabel("Wilgotność (%)")
+    ax.set_ylabel("Temperatura (°C)")
+    ax.set_zlabel("Intensywność nawilżania (%)")
+    ax.view_init(30, 230)
+
+plt.suptitle("Charakterystyka działania sterownika nawilżacza (logika rozmyta)", fontsize=16)
+plt.tight_layout()
+plt.show()
