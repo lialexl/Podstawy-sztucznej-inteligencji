@@ -1,116 +1,108 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 def gauss(x, c, sigma):
-    return np.exp(-((x - c) ** 2) / (2 * sigma ** 2))
+    return np.exp(-0.5 * ((x - c) / sigma) ** 2)
 
-
-
-def humidity_sets(x):
+def humidity_memberships(h):
     return {
-        "low": gauss(x, 20, 10),
-        "medium": gauss(x, 50, 10),
-        "high": gauss(x, 80, 10)
+        'low': gauss(h, 20, 10),
+        'medium': gauss(h, 45, 12),
+        'high': gauss(h, 70, 12)
     }
 
-def temp_sets(x):
+def temperature_memberships(t):
     return {
-        "cold": gauss(x, 15, 3),
-        "normal": gauss(x, 22, 3),
-        "hot": gauss(x, 28, 3)
+        'cold': gauss(t, 12, 3.5),
+        'comfortable': gauss(t, 20, 4),
+        'hot': gauss(t, 28, 3.5)
     }
 
-def price_sets(x):
+def price_memberships(p):
     return {
-        "cheap": gauss(x, 0.2, 0.15),
-        "mid": gauss(x, 0.5, 0.15),
-        "expensive": gauss(x, 0.8, 0.15)
+        'cheap': gauss(p, 0.25, 0.08),
+        'normal': gauss(p, 0.5, 0.08),
+        'expensive': gauss(p, 0.75, 0.08)
     }
 
+INTENSITY_X = np.linspace(0, 100, 400)
+INTENSITY_SETS = {
+    'low': gauss(INTENSITY_X, 10, 10),
+    'medium': gauss(INTENSITY_X, 45, 12),
+    'high': gauss(INTENSITY_X, 80, 12)
+}
 
+WEIGHTS = {
+    'humidity': 1.0,
+    'temperature': 0.5,
+    'price': 0.8
+}
 
-def humidifier_sets(x):
-    return {
-        "low": gauss(x, 10, 10),
-        "medium": gauss(x, 40, 10),
-        "high": gauss(x, 80, 10)
-    }
+def infer_intensity(h, t, p):
+    h_m = humidity_memberships(h)
+    t_m = temperature_memberships(t)
+    p_m = price_memberships(p)
 
+    aggregated = np.zeros_like(INTENSITY_X)
 
+    rules = [
+        ('low', 'cold', 'cheap', 'high', 1.0),
+        ('low', 'comfortable', 'normal', 'high', 0.9),
+        ('low', 'hot', 'expensive', 'medium', 0.7),
+        ('medium', 'cold', 'cheap', 'medium', 0.9),
+        ('medium', 'comfortable', 'normal', 'medium', 0.8),
+        ('medium', 'hot', 'expensive', 'low', 0.6),
+        ('high', 'cold', 'cheap', 'medium', 0.7),
+        ('high', 'comfortable', 'normal', 'low', 0.9),
+        ('high', 'hot', 'expensive', 'low', 1.0),
+    ]
 
-def infer(hum, temp, price):
-    rules = []
-    
-    rules.append(("high", hum["low"]))
-    
-    rules.append(("medium", hum["medium"]))
+    for (h_label, t_label, p_label, out_label, base_strength) in rules:
+        mu_h = h_m[h_label] * WEIGHTS['humidity']
+        mu_t = t_m[t_label] * WEIGHTS['temperature']
+        mu_p = p_m[p_label] * WEIGHTS['price']
 
-    rules.append(("low", hum["high"]))
+        strength = base_strength * mu_h * mu_t * mu_p
+        if strength <= 1e-8:
+            continue
 
-    t_weight = 0.3
-    rules.append(("high", t_weight * temp["hot"]))
-    rules.append(("low",  t_weight * temp["cold"]))
+        out_mu = INTENSITY_SETS[out_label] * strength
+        aggregated = np.maximum(aggregated, out_mu)
 
-    p_weight = 0.6
-    rules.append(("high", p_weight * price["cheap"]))
-    rules.append(("low",  p_weight * price["expensive"]))
+    denom = np.sum(aggregated)
+    if denom < 1e-8:
+        return 0.0
 
-    aggregated = {"low": 0, "medium": 0, "high": 0}
+    return float(np.sum(aggregated * INTENSITY_X) / denom)
 
-    for label, strength in rules:
-        aggregated[label] = max(aggregated[label], strength)
+def compute_surface(price, H_steps=60, T_steps=60):
+    H = np.linspace(0, 100, H_steps)
+    T = np.linspace(10, 30, T_steps)
+    HH, TT = np.meshgrid(H, T)
+    ZZ = np.zeros_like(HH)
 
-    return aggregated
+    for i in range(HH.shape[0]):
+        for j in range(HH.shape[1]):
+            ZZ[i, j] = infer_intensity(HH[i, j], TT[i, j], price)
+    return HH, TT, ZZ
 
+def plot_all_prices(prices):
+    fig = plt.figure(figsize=(18, 6))
 
-def defuzzify(agg):
-    xs = np.linspace(0, 100, 500)
-    output_mf = np.zeros_like(xs)
+    for idx, p in enumerate(prices, start=1):
+        HH, TT, ZZ = compute_surface(p)
+        ax = fig.add_subplot(1, 3, idx, projection='3d')
+        surf = ax.plot_surface(HH, TT, ZZ, cmap='viridis', edgecolor='none', alpha=0.9)
+        ax.set_xlabel("Humidity (%)")
+        ax.set_ylabel("Temperature (°C)")
+        ax.set_zlabel("Intensity (%)")
+        ax.set_title(f"Price = {p:.2f}")
+        fig.colorbar(surf, ax=ax, shrink=0.6)
 
-    sets_out = humidifier_sets(xs)
+    plt.tight_layout()
+    plt.show()
 
-    for label in agg:
-        output_mf = np.maximum(output_mf, np.minimum(agg[label], sets_out[label]))
-
-    return np.sum(xs * output_mf) / np.sum(output_mf)
-
-
-def humidifier_control(humidity, temp, price):
-    hum = humidity_sets(humidity)
-    t = temp_sets(temp)
-    p = price_sets(price)
-
-    agg = infer(hum, t, p)
-    return defuzzify(agg)
-
-
-humidity_vals = np.linspace(0, 100, 60)
-temp_vals = np.linspace(10, 30, 60)
-
-prices = [0.2, 0.5, 0.8]  
-
-fig = plt.figure(figsize=(16, 5))
-
-for i, price in enumerate(prices, 1):
-    H, T = np.meshgrid(humidity_vals, temp_vals)
-
-    Z = np.zeros_like(H)
-
-    for ix in range(H.shape[0]):
-        for jx in range(H.shape[1]):
-            Z[ix, jx] = humidifier_control(H[ix, jx], T[ix, jx], price)
-
-    ax = fig.add_subplot(1, 3, i, projection='3d')
-    ax.plot_surface(H, T, Z, cmap="viridis")
-    ax.set_title(f"Cena prądu = {price}")
-    ax.set_xlabel("Wilgotność (%)")
-    ax.set_ylabel("Temperatura (°C)")
-    ax.set_zlabel("Intensywność nawilżania (%)")
-    ax.view_init(30, 230)
-
-plt.suptitle("Charakterystyka działania sterownika nawilżacza (logika rozmyta)", fontsize=16)
-plt.tight_layout()
-plt.show()
+if __name__ == "__main__":
+    prices = [0.25, 0.5, 0.75]
+    plot_all_prices(prices)
